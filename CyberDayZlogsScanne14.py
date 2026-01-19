@@ -25,18 +25,10 @@ st.markdown(
         border: 1px solid #4b4b4b !important;
         border-radius: 8px !important;
         display: inline-flex !important;
-        padding: 0.5rem 1rem !important;
     }
     .death-log { color: #ff4b4b; font-weight: bold; border-left: 3px solid #ff4b4b; padding-left: 10px; }
     .connect-log { color: #28a745; border-left: 3px solid #28a745; padding-left: 10px; }
     .disconnect-log { color: #ffc107; border-left: 3px solid #ffc107; padding-left: 10px; }
-    .block-container { padding-top: 0rem !important; max-width: 100%; }
-    @media (min-width: 768px) {
-        [data-testid='column'] { 
-            height: 92vh !important; overflow-y: auto !important; 
-            padding: 15px; border: 1px solid #31333F; border-radius: 12px; background-color: #0d1117;
-        }
-    }
     </style>
     """,
     unsafe_allow_html=True
@@ -51,8 +43,10 @@ def make_izurvive_link(coords):
 def extract_player_and_coords(line):
     name, coords = "System/Server", None
     try:
+        # Extract name
         if 'Player "' in line: 
             name = line.split('Player "')[1].split('"')[0]
+        # Extract pos=<X, Z, Y> format
         if "pos=<" in line:
             raw = line.split("pos=<")[1].split(">")[0]
             parts = [p.strip() for p in raw.split(",")]
@@ -69,7 +63,8 @@ def filter_logs(files, mode, target_player=None):
     grouped_report, player_positions, boosting_tracker = {}, {}, {}
     raw_filtered_lines, debug_log_entries = [], []
     
-    header = "AdminLog started on 00:00:00\n******************************************************************************\n"
+    # Matching the exact header from your example file
+    header = "******************************************************************************\nAdminLog started on 2026-01-19 at 08:43:52\n\n"
     debug_header = f"--- DEBUG REPORT: {mode} ---\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
     all_lines = []
@@ -77,16 +72,19 @@ def filter_logs(files, mode, target_player=None):
         content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
         all_lines.extend(content.splitlines())
 
+    # Keywords strictly based on your provided ADM samples
     building_keys = ["placed", "built", "built base", "built wall", "built gate", "built platform"]
     raid_keys = ["dismantled", "folded", "unmount", "unmounted", "packed"]
     session_keys = ["connected", "disconnected", "died", "killed"]
     boosting_objects = ["fence kit", "nameless object", "fireplace", "garden plot", "barrel"]
 
-    for line in all_lines:
+    for i, line in enumerate(all_lines):
         if "|" not in line: continue
         
-        # Define time_str early to avoid UnboundLocalError
-        time_str = line.split(" | ")[0].split("]")[-1].strip()
+        # Clean the timestamp by removing the prefix if present
+        time_part = line.split(" | ")[0]
+        clean_time = time_part.split("]")[-1].strip() if "]" in time_part else time_part.strip()
+        
         name, coords = extract_player_and_coords(line)
         if name != "System/Server" and coords: player_positions[name] = coords
 
@@ -102,18 +100,19 @@ def filter_logs(files, mode, target_player=None):
         elif mode == "Session Tracking (Global)":
             if any(k in low for k in session_keys): should_process = True
         elif mode == "Suspicious Boosting Activity":
-            try: current_time = datetime.strptime(time_str, "%H:%M:%S")
+            try: current_time = datetime.strptime(clean_time, "%H:%M:%S")
             except: continue
 
             if any(k in low for k in ["placed", "built"]) and any(obj in low for obj in boosting_objects):
                 if name not in boosting_tracker: boosting_tracker[name] = []
                 boosting_tracker[name].append({"time": current_time, "pos": coords})
                 
+                # Logic: 3 items within 15 meters in under 5 minutes
                 if len(boosting_tracker[name]) >= 3:
                     prev = boosting_tracker[name][-3]
                     time_diff = (current_time - prev["time"]).total_seconds()
                     dist = calculate_distance(coords, prev["pos"])
-                    if time_diff <= 180 and dist < 10:
+                    if time_diff <= 300 and dist < 15:
                         should_process = True
 
         if should_process:
@@ -121,12 +120,8 @@ def filter_logs(files, mode, target_player=None):
             link = make_izurvive_link(last_pos)
             debug_log_entries.append(f"MATCH: {line.strip()}")
             
-            if "pos=<" in line:
-                raw_filtered_lines.append("##### PlayerList log: 1 players")
-                raw_filtered_lines.append(line)
-                raw_filtered_lines.append("#####")
-            else:
-                raw_filtered_lines.append(line)
+            # FORMATTING: Match your exact file structure with blank lines and markers
+            raw_filtered_lines.append(f"{line.strip()}\n") 
 
             if link.startswith("http") or mode == "Session Tracking (Global)":
                 status = "normal"
@@ -134,16 +129,15 @@ def filter_logs(files, mode, target_player=None):
                 elif "connect" in low: status = "connect"
                 elif "disconnect" in low: status = "disconnect"
 
-                event_entry = {"time": time_str, "text": str(line.strip()), "link": link, "status": status}
+                event_entry = {"time": clean_time, "text": str(line.strip()), "link": link, "status": status}
                 if name not in grouped_report: grouped_report[name] = []
                 grouped_report[name].append(event_entry)
     
     return grouped_report, header + "\n".join(raw_filtered_lines), debug_header + "\n".join(debug_log_entries)
 
 # --- USER INTERFACE ---
-st.markdown("#### 🛡️ CyberDayZ Scanner v26.1")
+st.markdown("#### 🛡️ CyberDayZ Scanner v26.2")
 
-# Pre-initialize session state to avoid KeyError on first run
 if "track_data" not in st.session_state: st.session_state.track_data = {}
 if "raw_download" not in st.session_state: st.session_state.raw_download = ""
 if "debug_download" not in st.session_state: st.session_state.debug_download = ""
@@ -167,15 +161,14 @@ with col1:
             st.session_state.debug_download = debug_file
 
     if st.session_state.track_data:
-        st.download_button("💾 Export iZurvive ADM", data=st.session_state.raw_download, file_name="CYBER_IZURVIVE.adm")
-        st.download_button("📂 Download Debug Report", data=st.session_state.debug_download, file_name="SCAN_DEBUG_REPORT.txt")
+        st.download_button("💾 Export Filtered ADM", data=st.session_state.raw_download, file_name="FILTERED_LOGS.adm")
         
         for p in sorted(st.session_state.track_data.keys()):
             with st.expander(f"👤 {p} ({len(st.session_state.track_data[p])} events)"):
                 for ev in st.session_state.track_data[p]:
                     st.caption(f"🕒 {ev['time']}")
                     st.markdown(f"<div class='{ev['status']}-log'>{ev['text']}</div>", unsafe_allow_html=True)
-                    if ev['link']: st.link_button("📍 View on Map", ev['link'])
+                    if ev['link']: st.link_button("📍 Map", ev['link'])
                     st.divider()
 
 with col2:
