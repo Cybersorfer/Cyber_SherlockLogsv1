@@ -65,7 +65,8 @@ def filter_logs(files, mode, target_player=None, area_coords=None, area_radius=5
     grouped_report, player_positions, boosting_tracker = {}, {}, {}
     raw_filtered_lines = []
     
-    header = "******************************************************************************\nAdminLog Filtered Export\n\n"
+    # FIXED HEADER: Matching your specific requested format for iZurvive compatibility 
+    header = "******************************************************************************\nAdminLog started on 2026-01-19 at 08:43:52\n\n"
 
     all_lines = []
     for uploaded_file in files:
@@ -128,7 +129,7 @@ def filter_logs(files, mode, target_player=None, area_coords=None, area_radius=5
     return grouped_report, header + "\n".join(raw_filtered_lines)
 
 # --- USER INTERFACE ---
-st.markdown("#### 🛡️ CyberDayZ Scanner v26.4")
+st.markdown("#### 🛡️ CyberDayZ Scanner v26.5")
 
 if "track_data" not in st.session_state: st.session_state.track_data = {}
 if "raw_download" not in st.session_state: st.session_state.raw_download = ""
@@ -155,10 +156,24 @@ with col1:
             target_player = st.selectbox("Select Player", player_list)
             
         elif mode == "Area Activity Search":
-            st.info("Enter coordinates from iZurvive (X and Y)")
-            cx = st.number_input("Center X", value=1542.0)
-            cy = st.number_input("Center Y (Z in iZurvive)", value=13915.0)
-            area_coords = [cx, cy]
+            # Preset Locations for ease of use
+            presets = {
+                "Custom Coordinates": None,
+                "Tisy Military": [1542.0, 13915.0],
+                "NWAF (North West Airfield)": [4530.0, 10245.0],
+                "VMC (Vybor Military)": [3824.0, 8912.0],
+                "Zelenogorsk": [2540.0, 5085.0]
+            }
+            selection = st.selectbox("Quick Locations", list(presets.keys()))
+            
+            if selection == "Custom Coordinates":
+                cx = st.number_input("Center X", value=1542.0)
+                cy = st.number_input("Center Y", value=13915.0)
+                area_coords = [cx, cy]
+            else:
+                area_coords = presets[selection]
+                st.write(f"Coords: {area_coords}")
+                
             area_radius = st.slider("Search Radius (Meters)", 50, 2000, 500)
 
         if st.button("🚀 Process Logs"):
@@ -167,7 +182,7 @@ with col1:
             st.session_state.raw_download = raw_file
 
     if st.session_state.track_data:
-        st.download_button("💾 Download ADM", data=st.session_state.raw_download, file_name="AREA_FILTER.adm")
+        st.download_button("💾 Download ADM", data=st.session_state.raw_download, file_name="CYBER_LOGS.adm")
         for p in sorted(st.session_state.track_data.keys()):
             with st.expander(f"👤 {p}"):
                 for ev in st.session_state.track_data[p]:
