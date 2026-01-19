@@ -72,10 +72,10 @@ def filter_logs(files, mode, target_player=None):
         content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
         all_lines.extend(content.splitlines())
 
-    # Keywords based on your ADM structure
+    # Keywords strictly based on Raid Watch working logic 
     building_keys = ["placed", "built", "mounted", "raised flag"]
     raid_keys = ["packed", "dismantled", "folded", "unmounted", "unmount"]
-    session_keys = ["connected", "disconnected", "died", "killed", "suicide", "bled out", "unconscious", "regained consciousness"]
+    session_keys = ["connected", "disconnected", "died", "killed", "suicide", "unconscious", "regained consciousness"]
     boosting_objects = ["fence kit", "nameless object", "fireplace", "garden plot", "barrel", "chest", "tent"]
 
     for line in all_lines:
@@ -103,12 +103,14 @@ def filter_logs(files, mode, target_player=None):
             try: current_time = datetime.strptime(time_str, "%H:%M:%S")
             except: continue
 
+            # Tracking placements rapid-fire 
             if ("place" in low or "placed" in low) and any(obj in low for obj in boosting_objects):
                 if name not in boosting_tracker: boosting_tracker[name] = []
                 boosting_tracker[name].append(current_time)
                 if len(boosting_tracker[name]) >= 3:
                     time_diff = (boosting_tracker[name][-1] - boosting_tracker[name][-3]).total_seconds()
                     if time_diff <= 60: should_process = True
+            # Resetting if cleanup occurs 
             elif any(r in low for r in ["folded", "packed", "dismantled"]):
                 boosting_tracker[name] = []
 
@@ -117,10 +119,8 @@ def filter_logs(files, mode, target_player=None):
             link = make_izurvive_link(last_pos)
             debug_log_entries.append(line.strip())
             
-            # iZurvive Structural Formatting
-            # Movement only lines or activity lines WITH position data
+            # iZurvive Formatting Logic (Fixed to match Raid Watch success) 
             if "pos=<" in line:
-                # We wrap activities in headers so iZurvive identifies the location of the action
                 raw_filtered_lines.append("\n##### PlayerList log: 1 players")
                 raw_filtered_lines.append(line)
                 raw_filtered_lines.append("#####\n")
@@ -129,7 +129,7 @@ def filter_logs(files, mode, target_player=None):
 
             if link.startswith("http"):
                 status = "normal"
-                if mode == "Suspicious Boosting Activity" or any(d in low for d in ["died", "killed", "hit by"]): status = "death"
+                if mode == "Suspicious Boosting Activity" or any(d in low for d in ["died", "killed"]): status = "death"
                 elif "connect" in low: status = "connect"
                 elif "disconnect" in low: status = "disconnect"
 
@@ -140,7 +140,7 @@ def filter_logs(files, mode, target_player=None):
     return grouped_report, header + "\n".join(raw_filtered_lines), debug_header + "\n".join(debug_log_entries)
 
 # --- USER INTERFACE ---
-st.markdown("#### 🛡️ CyberDayZ Scanner v20")
+st.markdown("#### 🛡️ CyberDayZ Scanner v21")
 col1, col2 = st.columns([1, 2.3])
 
 with col1:
