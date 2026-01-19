@@ -72,7 +72,7 @@ def filter_logs(files, mode, target_player=None):
         content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
         all_lines.extend(content.splitlines())
 
-    # Strict Keyword Lists [cite: 7, 8, 9]
+    # Keywords synchronized across features
     building_keys = ["placed", "built", "mounted", "raised flag", "kit"]
     raid_keys = ["packed", "dismantled", "folded", "unmounted", "unmount"]
     session_keys = ["connected", "disconnected", "died", "killed", "suicide", "unconscious", "regained consciousness"]
@@ -90,7 +90,6 @@ def filter_logs(files, mode, target_player=None):
             if target_player == name: should_process = True
 
         elif mode == "Building Only (Global)":
-            # Fix: Ensure coordinate-rich lines are captured for map display 
             if any(k in low for k in building_keys) and "pos=" in low: should_process = True
         
         elif mode == "Raid Watch (Global)":
@@ -109,16 +108,17 @@ def filter_logs(files, mode, target_player=None):
                 boosting_tracker[name].append(current_time)
                 if len(boosting_tracker[name]) >= 3:
                     time_diff = (boosting_tracker[name][-1] - boosting_tracker[name][-3]).total_seconds()
-                    if time_diff <= 60: should_process = True
+                    # Trigger for 3 placements within 60 seconds
+                    if time_diff <= 60 and "pos=" in low: should_process = True
             elif any(r in low for r in ["folded", "packed", "dismantled"]):
                 boosting_tracker[name] = []
 
         if should_process:
             last_pos = player_positions.get(name)
             link = make_izurvive_link(last_pos)
-            debug_log_entries.append(line.strip())
+            debug_log_entries.append(f"MATCH: {line.strip()}")
             
-            # iZurvive Structure: Wrap activity lines in PlayerList headers 
+            # UNIFIED iZurvive FORMATTING: Required for Pins and Activity Icons
             if "pos=<" in line:
                 raw_filtered_lines.append("\n##### PlayerList log: 1 players")
                 raw_filtered_lines.append(line)
@@ -138,44 +138,9 @@ def filter_logs(files, mode, target_player=None):
     
     return grouped_report, header + "\n".join(raw_filtered_lines), debug_header + "\n".join(debug_log_entries)
 
-# --- WEB UI ---
-st.markdown("#### 🛡️ CyberDayZ Scanner v22")
+# --- USER INTERFACE ---
+st.markdown("#### 🛡️ CyberDayZ Scanner v23")
 col1, col2 = st.columns([1, 2.3])
 
 with col1:
-    uploaded_files = st.file_uploader("Upload Admin Logs", type=['adm', 'rpt'], accept_multiple_files=True)
-    if uploaded_files:
-        mode = st.selectbox("Select Analysis Type", [
-            "Full Activity per Player", 
-            "Session Tracking (Global)", 
-            "Building Only (Global)", 
-            "Raid Watch (Global)", 
-            "Suspicious Boosting Activity"
-        ])
-        
-        target_player = None
-        if mode == "Full Activity per Player":
-            all_content = [f.getvalue().decode("utf-8", errors="ignore") for f in uploaded_files]
-            player_list = sorted(list(set(line.split('"')[1] for c in all_content for line in c.splitlines() if 'Player "' in line)))
-            target_player = st.selectbox("Select Player", player_list)
-
-        if st.button("🚀 Execute Analysis"):
-            report, raw_file, debug_file = filter_logs(uploaded_files, mode, target_player)
-            st.session_state.track_data, st.session_state.raw_download, st.session_state.debug_download = report, raw_file, debug_file
-
-    if "track_data" in st.session_state:
-        st.download_button("💾 Export iZurvive ADM", data=st.session_state.raw_download, file_name="CYBER_IZURVIVE.adm")
-        st.download_button("📂 Download Debug Report", data=st.session_state.debug_download, file_name="SCAN_DEBUG.txt")
-        
-        for p in sorted(st.session_state.track_data.keys()):
-            with st.expander(f"👤 {p} ({len(st.session_state.track_data[p])} events)"):
-                for ev in st.session_state.track_data[p]:
-                    st.caption(f"🕒 {ev['time']}")
-                    st.markdown(f"<div class='{ev['status']}-log'>{ev['text']}</div>", unsafe_allow_html=True)
-                    st.link_button("📍 Show on Map", ev['link'])
-                    st.divider()
-
-with col2:
-    if st.button("🔄 Reload Map"): st.session_state.mv = st.session_state.get('mv', 0) + 1
-    m_url = f"https://www.izurvive.com/serverlogs/?v={st.session_state.get('mv', 0)}"
-    components.iframe(m_url, height=1000, scrolling=True)
+    uploaded_files = st.file_uploader("
