@@ -51,18 +51,17 @@ def make_izurvive_link(coords):
 def extract_player_and_coords(line):
     name, coords = "System/Server", None
     try:
-        # Handles standard and prefixed logs 
         if 'Player "' in line: 
             name = line.split('Player "')[1].split('"')[0]
         if "pos=<" in line:
             raw = line.split("pos=<")[1].split(">")[0]
             parts = [p.strip() for p in raw.split(",")]
-            # X, Z are horizontal planes for iZurvive 
             coords = [float(parts[0]), float(parts[1])] 
     except: pass 
     return str(name), coords
 
 def calculate_distance(p1, p2):
+    if not p1 or not p2: return 999
     return math.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
 
 # 4. Filter Logic Implementation
@@ -78,7 +77,6 @@ def filter_logs(files, mode, target_player=None):
         content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
         all_lines.extend(content.splitlines())
 
-    # Keywords refined from your example file 
     building_keys = ["placed", "built", "built base", "built wall", "built gate", "built platform"]
     raid_keys = ["dismantled", "folded", "unmount", "unmounted", "packed"]
     session_keys = ["connected", "disconnected", "died", "killed"]
@@ -86,6 +84,9 @@ def filter_logs(files, mode, target_player=None):
 
     for line in all_lines:
         if "|" not in line: continue
+        
+        # Define time_str early to avoid UnboundLocalError
+        time_str = line.split(" | ")[0].split("]")[-1].strip()
         name, coords = extract_player_and_coords(line)
         if name != "System/Server" and coords: player_positions[name] = coords
 
@@ -94,20 +95,13 @@ def filter_logs(files, mode, target_player=None):
 
         if mode == "Full Activity per Player":
             if target_player == name: should_process = True
-
         elif mode == "Building Only (Global)":
-            if any(k in low for k in building_keys) and "pos=" in low:
-                should_process = True
-        
+            if any(k in low for k in building_keys) and "pos=" in low: should_process = True
         elif mode == "Raid Watch (Global)":
-            if any(k in low for k in raid_keys) and "pos=" in low:
-                should_process = True
-            
+            if any(k in low for k in raid_keys) and "pos=" in low: should_process = True
         elif mode == "Session Tracking (Global)":
             if any(k in low for k in session_keys): should_process = True
-
         elif mode == "Suspicious Boosting Activity":
-            time_str = line.split(" | ")[0].split("]")[-1].strip() # Handles time shift 
             try: current_time = datetime.strptime(time_str, "%H:%M:%S")
             except: continue
 
@@ -115,12 +109,10 @@ def filter_logs(files, mode, target_player=None):
                 if name not in boosting_tracker: boosting_tracker[name] = []
                 boosting_tracker[name].append({"time": current_time, "pos": coords})
                 
-                # Alert if 3 items placed within 10 meters in under 3 minutes 
                 if len(boosting_tracker[name]) >= 3:
                     prev = boosting_tracker[name][-3]
                     time_diff = (current_time - prev["time"]).total_seconds()
-                    dist = calculate_distance(coords, prev["pos"]) if coords and prev["pos"] else 999
-                    
+                    dist = calculate_distance(coords, prev["pos"])
                     if time_diff <= 180 and dist < 10:
                         should_process = True
 
@@ -129,7 +121,6 @@ def filter_logs(files, mode, target_player=None):
             link = make_izurvive_link(last_pos)
             debug_log_entries.append(f"MATCH: {line.strip()}")
             
-            # iZurvive ADM wrapping logic [cite: 1]
             if "pos=<" in line:
                 raw_filtered_lines.append("##### PlayerList log: 1 players")
                 raw_filtered_lines.append(line)
@@ -137,10 +128,9 @@ def filter_logs(files, mode, target_player=None):
             else:
                 raw_filtered_lines.append(line)
 
-            if link.startswith("http"):
+            if link.startswith("http") or mode == "Session Tracking (Global)":
                 status = "normal"
-                if mode == "Suspicious Boosting Activity": status = "death"
-                elif any(d in low for d in ["died", "killed"]): status = "death"
+                if mode == "Suspicious Boosting Activity" or any(d in low for d in ["died", "killed"]): status = "death"
                 elif "connect" in low: status = "connect"
                 elif "disconnect" in low: status = "disconnect"
 
@@ -151,7 +141,13 @@ def filter_logs(files, mode, target_player=None):
     return grouped_report, header + "\n".join(raw_filtered_lines), debug_header + "\n".join(debug_log_entries)
 
 # --- USER INTERFACE ---
-st.markdown("#### 🛡️ CyberDayZ Scanner v26")
+st.markdown("#### 🛡️ CyberDayZ Scanner v26.1")
+
+# Pre-initialize session state to avoid KeyError on first run
+if "track_data" not in st.session_state: st.session_state.track_data = {}
+if "raw_download" not in st.session_state: st.session_state.raw_download = ""
+if "debug_download" not in st.session_state: st.session_state.debug_download = ""
+
 col1, col2 = st.columns([1, 2.3])
 
 with col1:
@@ -166,9 +162,11 @@ with col1:
 
         if st.button("🚀 Process"):
             report, raw_file, debug_file = filter_logs(uploaded_files, mode, target_player)
-            st.session_state.track_data, st.session_state.raw_download, st.session_state.debug_download = report, raw_file, debug_file
+            st.session_state.track_data = report
+            st.session_state.raw_download = raw_file
+            st.session_state.debug_download = debug_file
 
-    if "track_data" in st.session_state:
+    if st.session_state.track_data:
         st.download_button("💾 Export iZurvive ADM", data=st.session_state.raw_download, file_name="CYBER_IZURVIVE.adm")
         st.download_button("📂 Download Debug Report", data=st.session_state.debug_download, file_name="SCAN_DEBUG_REPORT.txt")
         
@@ -177,7 +175,7 @@ with col1:
                 for ev in st.session_state.track_data[p]:
                     st.caption(f"🕒 {ev['time']}")
                     st.markdown(f"<div class='{ev['status']}-log'>{ev['text']}</div>", unsafe_allow_html=True)
-                    st.link_button("📍 View on Map", ev['link'])
+                    if ev['link']: st.link_button("📍 View on Map", ev['link'])
                     st.divider()
 
 with col2:
