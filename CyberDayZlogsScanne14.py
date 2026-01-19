@@ -13,14 +13,12 @@ st.markdown(
     <style>
     .stApp { background-color: #0e1117; color: #fafafa; }
     #MainMenu, header, footer { visibility: hidden; }
-
     [data-testid="stFileUploader"] {
         background-color: #161b22;
         border: 1px solid #31333F;
         border-radius: 15px;
         padding: 20px;
     }
-    
     div.stButton > button, div.stLinkButton > a {
         background-color: #262730 !important;
         color: #ffffff !important;
@@ -36,13 +34,10 @@ st.markdown(
         border-color: #ff4b4b !important;
         color: #ff4b4b !important;
     }
-
     .death-log { color: #ff4b4b; font-weight: bold; border-left: 3px solid #ff4b4b; padding-left: 10px; }
     .connect-log { color: #28a745; border-left: 3px solid #28a745; padding-left: 10px; }
     .disconnect-log { color: #ffc107; border-left: 3px solid #ffc107; padding-left: 10px; }
-
     .block-container { padding-top: 0rem !important; max-width: 100%; }
-    
     @media (min-width: 768px) {
         [data-testid='column'] { 
             height: 90vh !important; 
@@ -79,7 +74,7 @@ def extract_player_and_coords(line):
     return str(name), coords
 
 # 4. Filter Logic
-def filter_logs(files, mode, target_player=None, sub_choice=None):
+def filter_logs(files, mode, target_player=None):
     grouped_report = {} 
     player_positions = {} 
     boosting_tracker = {}
@@ -94,8 +89,9 @@ def filter_logs(files, mode, target_player=None, sub_choice=None):
         content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
         all_lines.extend(content.splitlines())
 
-    placement_keys = ["placed", "built", "folded", "shelterfabric", "mounted"]
-    raid_keys = ["dismantled", "unmount", "packed", "barbedwirehit", "fireplace", "gardenplot"]
+    # Filter Sets
+    placement_keys = ["placed", "built", "folded", "shelterfabric", "mounted", "kit"]
+    raid_keys = ["dismantled", "unmount", "packed", "barbedwirehit"]
     session_keys = ["connected", "disconnected", "connecting", "died", "killed", "bled out", "suicide"]
     stacking_objects = ["placed fence kit", "placed nameless object", "placed fireplace"]
 
@@ -109,44 +105,47 @@ def filter_logs(files, mode, target_player=None, sub_choice=None):
         low = line.lower()
         should_process = False
 
-        # --- MODE: Specific Player ---
-        if mode == "Activity per Specific Player" and target_player == name:
-            if sub_choice == "Full History": should_process = True
-            elif sub_choice == "Movement Only" and "pos=" in low: should_process = True
-            elif sub_choice == "Movement + Building":
-                if ("pos=" in low or any(k in low for k in placement_keys)) and "hit" not in low: should_process = True
-            elif sub_choice == "Movement + Raid Watch":
-                if ("pos=" in low or any(k in low for k in raid_keys)) and "built" not in low: should_process = True
+        # --- MODES ---
+        if mode == "Full Activity per Player" and target_player == name:
+            should_process = True
         
-        # --- MODE: Global Session ---
         elif mode == "Session Tracking (Global)":
             if any(k in low for k in session_keys): should_process = True
 
-        # --- MODE: Suspicious Boosting ---
+        elif mode == "Building Only (Global)":
+            if any(k in low for k in placement_keys) and "pos=" not in low: should_process = True
+
+        elif mode == "Raid Watch (Global)":
+            if any(k in low for k in raid_keys) and "pos=" not in low: should_process = True
+
         elif mode == "Suspicious Boosting Activity":
             time_str = line.split(" | ")[0]
-            try:
-                current_time = datetime.strptime(time_str, "%H:%M:%S")
-            except:
-                continue
+            try: current_time = datetime.strptime(time_str, "%H:%M:%S")
+            except: continue
 
             if any(obj in low for obj in stacking_objects):
                 if name not in boosting_tracker: boosting_tracker[name] = []
                 boosting_tracker[name].append(current_time)
-                
                 if len(boosting_tracker[name]) >= 3:
                     time_diff = (boosting_tracker[name][-1] - boosting_tracker[name][-3]).total_seconds()
                     if time_diff <= 60:
                         should_process = True
-                        audit_log_entries.append(f"[{time_str}] ALERT: {name} placed 3+ stacking objects in {time_diff}s at {coords}")
-            
+                        audit_log_entries.append(f"[{time_str}] ALERT: {name} placed 3+ objects in {time_diff}s at {coords}")
             elif any(reset in low for reset in ["folded fence", "dismantled", "packed"]):
                 boosting_tracker[name] = []
 
+        # iZurvive Structure Fix & UI Processing
         if should_process:
             last_pos = player_positions.get(name)
             link = make_izurvive_link(last_pos)
-            raw_filtered_lines.append(line)
+            
+            # Formatting for iZurvive Log Parser
+            if "pos=<" in line:
+                raw_filtered_lines.append("##### PlayerList log: 1 players")
+                raw_filtered_lines.append(line)
+                raw_filtered_lines.append("#####")
+            else:
+                raw_filtered_lines.append(line)
 
             if link.startswith("http"):
                 status = "normal"
@@ -166,30 +165,33 @@ st.markdown("#### 🛡️ CyberDayZ Scanner")
 col1, col2 = st.columns([1, 2.3])
 
 with col1:
-    st.write("**1. Filter Logs**")
     uploaded_files = st.file_uploader("Upload .ADM", type=['adm', 'rpt'], accept_multiple_files=True)
 
     if uploaded_files:
-        mode = st.selectbox("Select Filter", ["Activity per Specific Player", "Session Tracking (Global)", "Suspicious Boosting Activity"])
+        mode = st.selectbox("Select Filter", [
+            "Full Activity per Player", 
+            "Session Tracking (Global)", 
+            "Building Only (Global)", 
+            "Raid Watch (Global)", 
+            "Suspicious Boosting Activity"
+        ])
         
-        target_player, sub_choice = None, None
-        if mode == "Activity per Specific Player":
+        target_player = None
+        if mode == "Full Activity per Player":
             temp_all = []
             for f in uploaded_files:
                 temp_all.extend(f.getvalue().decode("utf-8", errors="ignore").splitlines())
             player_list = sorted(list(set(line.split('"')[1] for line in temp_all if 'Player "' in line)))
             target_player = st.selectbox("Select Player", player_list)
-            sub_choice = st.radio("Detail Level", ["Full History", "Movement Only", "Movement + Building", "Movement + Raid Watch"])
 
         if st.button("🚀 Process"):
-            report, raw_file, audit_file = filter_logs(uploaded_files, mode, target_player, sub_choice)
+            report, raw_file, audit_file = filter_logs(uploaded_files, mode, target_player)
             st.session_state.track_data = report
             st.session_state.raw_download = raw_file
             st.session_state.audit_download = audit_file
 
     if "track_data" in st.session_state:
         st.download_button("💾 Download Filtered ADM", data=st.session_state.raw_download, file_name="CYBER_FILTERED.adm")
-        
         if st.session_state.get("audit_download"):
             st.download_button("🚨 Download Audit Log", data=st.session_state.audit_download, file_name="SUSPICIOUS_AUDIT.txt")
         
