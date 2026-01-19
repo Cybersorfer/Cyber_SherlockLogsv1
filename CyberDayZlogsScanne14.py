@@ -65,14 +65,14 @@ def filter_logs(files, mode, target_player=None):
     raw_filtered_lines, debug_log_entries = [], []
     
     header = "AdminLog started on 00:00:00\n******************************************************************************\n"
-    debug_header = f"--- SCANNER DEBUG REPORT: {mode} ---\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+    debug_header = f"--- DEBUG REPORT: {mode} ---\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
     all_lines = []
     for uploaded_file in files:
         content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
         all_lines.extend(content.splitlines())
 
-    # Strictly defined keywords per your request
+    # Keywords strictly defined per your request
     building_keys = ["place", "placed", "placements", "built", "mount", "mounted"]
     raid_keys = ["pack", "packed", "dismantle", "dismantled", "fold", "folded", "unmount", "unmounted"]
     session_keys = ["connected", "disconnected", "died", "killed"]
@@ -86,7 +86,6 @@ def filter_logs(files, mode, target_player=None):
         low = line.lower()
         should_process = False
 
-        # Mode Selection Logic
         if mode == "Full Activity per Player":
             if target_player == name: should_process = True
 
@@ -106,7 +105,6 @@ def filter_logs(files, mode, target_player=None):
             try: current_time = datetime.strptime(time_str, "%H:%M:%S")
             except: continue
 
-            # Filter for "place/placed/placements" of boosting objects
             if any(k in low for k in ["place", "placed", "placements"]) and any(obj in low for obj in boosting_objects):
                 if name not in boosting_tracker: boosting_tracker[name] = []
                 boosting_tracker[name].append(current_time)
@@ -114,17 +112,15 @@ def filter_logs(files, mode, target_player=None):
                     time_diff = (boosting_tracker[name][-1] - boosting_tracker[name][-3]).total_seconds()
                     if time_diff <= 60 and "pos=" in low:
                         should_process = True
-            # Reset if any "fold" activity occurs for that player
             elif "fold" in low or "folded" in low:
                 boosting_tracker[name] = []
 
-        # FINAL FORMATTING: Wraps every processed line in the Successful RaidWatch format
         if should_process:
             last_pos = player_positions.get(name)
             link = make_izurvive_link(last_pos)
-            debug_log_entries.append(f"LOG: {line.strip()}")
+            debug_log_entries.append(f"MATCH: {line.strip()}")
             
-            # This is the exact format from RaidWatch that works on iZurvive
+            # WRAPPING FORMAT: Identical to the Raid Watch logic that works on iZurvive
             if "pos=<" in line:
                 raw_filtered_lines.append("##### PlayerList log: 1 players")
                 raw_filtered_lines.append(line)
@@ -145,11 +141,11 @@ def filter_logs(files, mode, target_player=None):
     return grouped_report, header + "\n".join(raw_filtered_lines), debug_header + "\n".join(debug_log_entries)
 
 # --- USER INTERFACE ---
-st.markdown("#### 🛡️ CyberDayZ Scanner v24")
+st.markdown("#### 🛡️ CyberDayZ Scanner v25")
 col1, col2 = st.columns([1, 2.3])
 
 with col1:
-    uploaded_files = st.file_uploader("Upload Logs", type=['adm', 'rpt'], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Upload Admin Logs", type=['adm', 'rpt'], accept_multiple_files=True)
     if uploaded_files:
         mode = st.selectbox("Select Filter", ["Full Activity per Player", "Session Tracking (Global)", "Building Only (Global)", "Raid Watch (Global)", "Suspicious Boosting Activity"])
         target_player = None
@@ -163,18 +159,18 @@ with col1:
             st.session_state.track_data, st.session_state.raw_download, st.session_state.debug_download = report, raw_file, debug_file
 
     if "track_data" in st.session_state:
-        st.download_button("💾 Export iZurvive ADM", data=st.session_state.raw_download, file_name="CYBER_LOGS.adm")
-        st.download_button("📂 Download Debug Report", data=st.session_state.debug_download, file_name="DEBUG_REPORT.txt")
+        st.download_button("💾 Export iZurvive ADM", data=st.session_state.raw_download, file_name="CYBER_IZURVIVE.adm")
+        st.download_button("📂 Download Debug Report", data=st.session_state.debug_download, file_name="SCAN_DEBUG_REPORT.txt")
         
         for p in sorted(st.session_state.track_data.keys()):
             with st.expander(f"👤 {p} ({len(st.session_state.track_data[p])} events)"):
                 for ev in st.session_state.track_data[p]:
                     st.caption(f"🕒 {ev['time']}")
                     st.markdown(f"<div class='{ev['status']}-log'>{ev['text']}</div>", unsafe_allow_html=True)
-                    st.link_button("📍 Show on Map", ev['link'])
+                    st.link_button("📍 View on Map", ev['link'])
                     st.divider()
 
 with col2:
-    if st.button("🔄 Reload Map"): st.session_state.mv = st.session_state.get('mv', 0) + 1
+    if st.button("🔄 Refresh Map"): st.session_state.mv = st.session_state.get('mv', 0) + 1
     m_url = f"https://www.izurvive.com/serverlogs/?v={st.session_state.get('mv', 0)}"
     components.iframe(m_url, height=1000, scrolling=True)
