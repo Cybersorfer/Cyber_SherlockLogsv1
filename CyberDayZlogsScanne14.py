@@ -65,7 +65,7 @@ def filter_logs(files, mode, target_player=None, area_coords=None, area_radius=5
     grouped_report, player_positions, boosting_tracker = {}, {}, {}
     raw_filtered_lines = []
     
-    # FIXED HEADER: Matching your specific requested format for iZurvive compatibility 
+    # FIXED HEADER: Matching the sample format to ensure iZurvive readability 
     header = "******************************************************************************\nAdminLog started on 2026-01-19 at 08:43:52\n\n"
 
     all_lines = []
@@ -129,7 +129,7 @@ def filter_logs(files, mode, target_player=None, area_coords=None, area_radius=5
     return grouped_report, header + "\n".join(raw_filtered_lines)
 
 # --- USER INTERFACE ---
-st.markdown("#### 🛡️ CyberDayZ Scanner v26.5")
+st.markdown("#### 🛡️ CyberDayZ Scanner v26.6")
 
 if "track_data" not in st.session_state: st.session_state.track_data = {}
 if "raw_download" not in st.session_state: st.session_state.raw_download = ""
@@ -156,12 +156,14 @@ with col1:
             target_player = st.selectbox("Select Player", player_list)
             
         elif mode == "Area Activity Search":
-            # Preset Locations for ease of use
+            # UPDATED PRESETS: Added Vybor and Radio Zenit 
             presets = {
                 "Custom Coordinates": None,
                 "Tisy Military": [1542.0, 13915.0],
                 "NWAF (North West Airfield)": [4530.0, 10245.0],
                 "VMC (Vybor Military)": [3824.0, 8912.0],
+                "Vybor (Town Center)": [3785.0, 8925.0],
+                "Radio Zenit": [8355.0, 5978.0],
                 "Zelenogorsk": [2540.0, 5085.0]
             }
             selection = st.selectbox("Quick Locations", list(presets.keys()))
