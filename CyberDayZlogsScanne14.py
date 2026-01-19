@@ -4,28 +4,42 @@ import math
 from datetime import datetime
 import streamlit.components.v1 as components
 
-# 1. Setup Page Config
-st.set_page_config(page_title="CyberDayZ Log Scanner", layout="wide")
+# 1. Setup Page Config - Essential for mobile scaling
+st.set_page_config(page_title="CyberDayZ Log Scanner", layout="wide", initial_sidebar_state="collapsed")
 
-# 2. CSS: Professional Dark UI
+# 2. CSS: Professional Dark UI + iOS Fixes
 st.markdown(
     """
     <style>
     .stApp { background-color: #0e1117; color: #fafafa; }
     #MainMenu, header, footer { visibility: hidden; }
-    [data-testid="stFileUploader"] {
-        background-color: #161b22;
-        border: 1px solid #31333F;
-        border-radius: 15px;
-        padding: 20px;
-    }
+    
+    /* Improve touch targets for mobile */
     div.stButton > button, div.stLinkButton > a {
         background-color: #262730 !important;
         color: #ffffff !important;
         border: 1px solid #4b4b4b !important;
         border-radius: 8px !important;
-        display: inline-flex !important;
+        padding: 0.75rem 1rem !important; /* Larger touch area */
+        width: 100%;
     }
+
+    /* Fix for iOS File Uploader visibility */
+    [data-testid="stFileUploader"] {
+        background-color: #161b22;
+        border: 1px dashed #4b4b4b;
+        border-radius: 15px;
+        padding: 10px;
+    }
+
+    /* Column stacking for mobile */
+    @media (max-width: 768px) {
+        [data-testid="column"] {
+            width: 100% !important;
+            flex: 1 1 auto !important;
+        }
+    }
+
     .death-log { color: #ff4b4b; font-weight: bold; border-left: 3px solid #ff4b4b; padding-left: 10px; }
     .connect-log { color: #28a745; border-left: 3px solid #28a745; padding-left: 10px; }
     .disconnect-log { color: #ffc107; border-left: 3px solid #ffc107; padding-left: 10px; }
@@ -43,10 +57,8 @@ def make_izurvive_link(coords):
 def extract_player_and_coords(line):
     name, coords = "System/Server", None
     try:
-        # Extract name
         if 'Player "' in line: 
             name = line.split('Player "')[1].split('"')[0]
-        # Extract pos=<X, Z, Y> format
         if "pos=<" in line:
             raw = line.split("pos=<")[1].split(">")[0]
             parts = [p.strip() for p in raw.split(",")]
@@ -61,27 +73,24 @@ def calculate_distance(p1, p2):
 # 4. Filter Logic Implementation
 def filter_logs(files, mode, target_player=None):
     grouped_report, player_positions, boosting_tracker = {}, {}, {}
-    raw_filtered_lines, debug_log_entries = [], []
+    raw_filtered_lines = []
     
-    # Matching the exact header from your example file
     header = "******************************************************************************\nAdminLog started on 2026-01-19 at 08:43:52\n\n"
-    debug_header = f"--- DEBUG REPORT: {mode} ---\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
     all_lines = []
     for uploaded_file in files:
-        content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
+        # iOS fix: explicitly handle byte decoding for mobile browsers
+        content = uploaded_file.read().decode("utf-8", errors="ignore")
         all_lines.extend(content.splitlines())
 
-    # Keywords strictly based on your provided ADM samples
     building_keys = ["placed", "built", "built base", "built wall", "built gate", "built platform"]
     raid_keys = ["dismantled", "folded", "unmount", "unmounted", "packed"]
     session_keys = ["connected", "disconnected", "died", "killed"]
     boosting_objects = ["fence kit", "nameless object", "fireplace", "garden plot", "barrel"]
 
-    for i, line in enumerate(all_lines):
+    for line in all_lines:
         if "|" not in line: continue
         
-        # Clean the timestamp by removing the prefix if present
         time_part = line.split(" | ")[0]
         clean_time = time_part.split("]")[-1].strip() if "]" in time_part else time_part.strip()
         
@@ -107,71 +116,73 @@ def filter_logs(files, mode, target_player=None):
                 if name not in boosting_tracker: boosting_tracker[name] = []
                 boosting_tracker[name].append({"time": current_time, "pos": coords})
                 
-                # Logic: 3 items within 15 meters in under 5 minutes
                 if len(boosting_tracker[name]) >= 3:
                     prev = boosting_tracker[name][-3]
                     time_diff = (current_time - prev["time"]).total_seconds()
                     dist = calculate_distance(coords, prev["pos"])
-                    if time_diff <= 300 and dist < 15:
-                        should_process = True
+                    if time_diff <= 300 and dist < 15: should_process = True
 
         if should_process:
-            last_pos = player_positions.get(name)
-            link = make_izurvive_link(last_pos)
-            debug_log_entries.append(f"MATCH: {line.strip()}")
-            
-            # FORMATTING: Match your exact file structure with blank lines and markers
             raw_filtered_lines.append(f"{line.strip()}\n") 
+            link = make_izurvive_link(player_positions.get(name))
 
-            if link.startswith("http") or mode == "Session Tracking (Global)":
-                status = "normal"
-                if mode == "Suspicious Boosting Activity" or any(d in low for d in ["died", "killed"]): status = "death"
-                elif "connect" in low: status = "connect"
-                elif "disconnect" in low: status = "disconnect"
+            status = "normal"
+            if mode == "Suspicious Boosting Activity" or any(d in low for d in ["died", "killed"]): status = "death"
+            elif "connect" in low: status = "connect"
+            elif "disconnect" in low: status = "disconnect"
 
-                event_entry = {"time": clean_time, "text": str(line.strip()), "link": link, "status": status}
-                if name not in grouped_report: grouped_report[name] = []
-                grouped_report[name].append(event_entry)
+            event_entry = {"time": clean_time, "text": str(line.strip()), "link": link, "status": status}
+            if name not in grouped_report: grouped_report[name] = []
+            grouped_report[name].append(event_entry)
     
-    return grouped_report, header + "\n".join(raw_filtered_lines), debug_header + "\n".join(debug_log_entries)
+    return grouped_report, header + "\n".join(raw_filtered_lines)
 
 # --- USER INTERFACE ---
-st.markdown("#### 🛡️ CyberDayZ Scanner v26.2")
+st.markdown("#### 🛡️ CyberDayZ Scanner v26.3")
 
+# Initialize session state
 if "track_data" not in st.session_state: st.session_state.track_data = {}
 if "raw_download" not in st.session_state: st.session_state.raw_download = ""
-if "debug_download" not in st.session_state: st.session_state.debug_download = ""
 
+# Layout: col1 for controls, col2 for map
 col1, col2 = st.columns([1, 2.3])
 
 with col1:
-    uploaded_files = st.file_uploader("Upload Admin Logs", type=['adm', 'rpt'], accept_multiple_files=True)
+    # MOBILE FIX: Removed specific 'type' extension to allow iOS 'Files' app to select .ADM/RPT files more easily
+    uploaded_files = st.file_uploader("Upload Admin Logs", accept_multiple_files=True)
+    
     if uploaded_files:
         mode = st.selectbox("Select Filter", ["Full Activity per Player", "Session Tracking (Global)", "Building Only (Global)", "Raid Watch (Global)", "Suspicious Boosting Activity"])
         target_player = None
+        
         if mode == "Full Activity per Player":
-            all_content = [f.getvalue().decode("utf-8", errors="ignore") for f in uploaded_files]
-            player_list = sorted(list(set(line.split('"')[1] for c in all_content for line in c.splitlines() if 'Player "' in line)))
+            # Extract player list from uploaded files
+            all_names = []
+            for f in uploaded_files:
+                f.seek(0)
+                content = f.read().decode("utf-8", errors="ignore")
+                all_names.extend([line.split('"')[1] for line in content.splitlines() if 'Player "' in line])
+            player_list = sorted(list(set(all_names)))
             target_player = st.selectbox("Select Player", player_list)
 
-        if st.button("🚀 Process"):
-            report, raw_file, debug_file = filter_logs(uploaded_files, mode, target_player)
+        if st.button("🚀 Process Logs"):
+            report, raw_file = filter_logs(uploaded_files, mode, target_player)
             st.session_state.track_data = report
             st.session_state.raw_download = raw_file
-            st.session_state.debug_download = debug_file
 
     if st.session_state.track_data:
-        st.download_button("💾 Export Filtered ADM", data=st.session_state.raw_download, file_name="FILTERED_LOGS.adm")
+        st.download_button("💾 Download ADM", data=st.session_state.raw_download, file_name="FILTERED_LOGS.adm")
         
         for p in sorted(st.session_state.track_data.keys()):
-            with st.expander(f"👤 {p} ({len(st.session_state.track_data[p])} events)"):
+            with st.expander(f"👤 {p}"):
                 for ev in st.session_state.track_data[p]:
                     st.caption(f"🕒 {ev['time']}")
                     st.markdown(f"<div class='{ev['status']}-log'>{ev['text']}</div>", unsafe_allow_html=True)
                     if ev['link']: st.link_button("📍 Map", ev['link'])
                     st.divider()
 
+# Map column - hidden on very small screens to save space if desired
 with col2:
     if st.button("🔄 Refresh Map"): st.session_state.mv = st.session_state.get('mv', 0) + 1
     m_url = f"https://www.izurvive.com/serverlogs/?v={st.session_state.get('mv', 0)}"
-    components.iframe(m_url, height=1000, scrolling=True)
+    st.components.v1.iframe(m_url, height=800, scrolling=True)
