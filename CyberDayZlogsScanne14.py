@@ -44,20 +44,26 @@ st.markdown(
 
 # 3. Core Functions
 def make_izurvive_link(coords):
-    if coords and isinstance(coords, list) and len(coords) >= 2:
+    if coords and len(coords) >= 2:
         return f"https://www.izurvive.com/chernarusplus/#location={coords[0]};{coords[1]}"
     return ""
 
 def extract_player_and_coords(line):
     name, coords = "System/Server", None
     try:
-        if 'Player "' in line: name = line.split('Player "')[1].split('"')[0]
+        # Handles standard and prefixed logs 
+        if 'Player "' in line: 
+            name = line.split('Player "')[1].split('"')[0]
         if "pos=<" in line:
             raw = line.split("pos=<")[1].split(">")[0]
             parts = [p.strip() for p in raw.split(",")]
-            coords = [float(parts[0]), float(parts[1])]
+            # X, Z are horizontal planes for iZurvive 
+            coords = [float(parts[0]), float(parts[1])] 
     except: pass 
     return str(name), coords
+
+def calculate_distance(p1, p2):
+    return math.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
 
 # 4. Filter Logic Implementation
 def filter_logs(files, mode, target_player=None):
@@ -72,11 +78,11 @@ def filter_logs(files, mode, target_player=None):
         content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
         all_lines.extend(content.splitlines())
 
-    # Keywords strictly defined per your request
-    building_keys = ["place", "placed", "placements", "built", "mount", "mounted"]
-    raid_keys = ["pack", "packed", "dismantle", "dismantled", "fold", "folded", "unmount", "unmounted"]
+    # Keywords refined from your example file 
+    building_keys = ["placed", "built", "built base", "built wall", "built gate", "built platform"]
+    raid_keys = ["dismantled", "folded", "unmount", "unmounted", "packed"]
     session_keys = ["connected", "disconnected", "died", "killed"]
-    boosting_objects = ["fence kit", "nameless object", "fireplace", "garden plot"]
+    boosting_objects = ["fence kit", "nameless object", "fireplace", "garden plot", "barrel"]
 
     for line in all_lines:
         if "|" not in line: continue
@@ -101,26 +107,29 @@ def filter_logs(files, mode, target_player=None):
             if any(k in low for k in session_keys): should_process = True
 
         elif mode == "Suspicious Boosting Activity":
-            time_str = line.split(" | ")[0]
+            time_str = line.split(" | ")[0].split("]")[-1].strip() # Handles time shift 
             try: current_time = datetime.strptime(time_str, "%H:%M:%S")
             except: continue
 
-            if any(k in low for k in ["place", "placed", "placements"]) and any(obj in low for obj in boosting_objects):
+            if any(k in low for k in ["placed", "built"]) and any(obj in low for obj in boosting_objects):
                 if name not in boosting_tracker: boosting_tracker[name] = []
-                boosting_tracker[name].append(current_time)
+                boosting_tracker[name].append({"time": current_time, "pos": coords})
+                
+                # Alert if 3 items placed within 10 meters in under 3 minutes 
                 if len(boosting_tracker[name]) >= 3:
-                    time_diff = (boosting_tracker[name][-1] - boosting_tracker[name][-3]).total_seconds()
-                    if time_diff <= 60 and "pos=" in low:
+                    prev = boosting_tracker[name][-3]
+                    time_diff = (current_time - prev["time"]).total_seconds()
+                    dist = calculate_distance(coords, prev["pos"]) if coords and prev["pos"] else 999
+                    
+                    if time_diff <= 180 and dist < 10:
                         should_process = True
-            elif "fold" in low or "folded" in low:
-                boosting_tracker[name] = []
 
         if should_process:
             last_pos = player_positions.get(name)
             link = make_izurvive_link(last_pos)
             debug_log_entries.append(f"MATCH: {line.strip()}")
             
-            # WRAPPING FORMAT: Identical to the Raid Watch logic that works on iZurvive
+            # iZurvive ADM wrapping logic [cite: 1]
             if "pos=<" in line:
                 raw_filtered_lines.append("##### PlayerList log: 1 players")
                 raw_filtered_lines.append(line)
@@ -130,18 +139,19 @@ def filter_logs(files, mode, target_player=None):
 
             if link.startswith("http"):
                 status = "normal"
-                if mode == "Suspicious Boosting Activity" or any(d in low for d in ["died", "killed"]): status = "death"
+                if mode == "Suspicious Boosting Activity": status = "death"
+                elif any(d in low for d in ["died", "killed"]): status = "death"
                 elif "connect" in low: status = "connect"
                 elif "disconnect" in low: status = "disconnect"
 
-                event_entry = {"time": str(line.split(" | ")[0]), "text": str(line.strip()), "link": link, "status": status}
+                event_entry = {"time": time_str, "text": str(line.strip()), "link": link, "status": status}
                 if name not in grouped_report: grouped_report[name] = []
                 grouped_report[name].append(event_entry)
     
     return grouped_report, header + "\n".join(raw_filtered_lines), debug_header + "\n".join(debug_log_entries)
 
 # --- USER INTERFACE ---
-st.markdown("#### 🛡️ CyberDayZ Scanner v25")
+st.markdown("#### 🛡️ CyberDayZ Scanner v26")
 col1, col2 = st.columns([1, 2.3])
 
 with col1:
