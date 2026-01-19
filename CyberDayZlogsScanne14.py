@@ -1,92 +1,92 @@
-import streamlit as st
-import os
-import io
+def filter_logs(files, mode, target_player=None, sub_choice=None):
+    grouped_report = {} 
+    player_positions = {} 
+    # Track timestamps for boosting: { player_name: [list_of_datetime_objects] }
+    boosting_tracker = {}
+    raw_filtered_lines = []
+    
+    header = "AdminLog started on 00:00:00\n******************************************************************************\n"
 
-# Setup Page Config
-st.set_page_config(page_title="CyberDayZ Log Scanner", layout="centered")
-
-def filter_logs(files, main_choice, target_player=None, sub_choice=None):
     all_lines = []
-    header = "******************************************************************************\n"
-    header += "AdminLog started on Web_Filter_Session\n"
-
     for uploaded_file in files:
-        stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8", errors="ignore"))
-        for line in stringio:
-            if "|" in line and ":" in line:
-                all_lines.append(line)
+        content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
+        all_lines.extend(content.splitlines())
 
-    final_output = []
+    # Keywords for suspicious stacking behavior
     placement_keys = ["placed", "built", "folded", "shelterfabric", "mounted"]
-    session_keys = ["connected", "disconnected", "lost connection", "choosing to respawn"]
-    raid_keys = ["dismantled", "unmount", "packed", "barbedwirehit", "fireplace", "gardenplot", "fence kit"]
+    # Added "nameless object" and "fireplace" for stacking detection
+    stacking_objects = ["placed fence kit", "placed nameless object", "placed fireplace"] 
+    raid_keys = ["dismantled", "unmount", "packed", "barbedwirehit", "fireplace", "gardenplot"]
+    session_keys = ["connected", "disconnected", "connecting", "died", "killed", "bled out", "suicide"]
 
-    if main_choice == "Activity per Specific Player" and target_player:
-        for line in all_lines:
-            low = line.lower()
-            if target_player in line:
-                if sub_choice == "Full History": final_output.append(line)
-                elif sub_choice == "Movement Only" and "pos=" in low: final_output.append(line)
-                elif sub_choice == "Movement + Building":
-                    if ("pos=" in low or any(k in low for k in placement_keys)) and "hit" not in low:
-                        final_output.append(line)
-                elif sub_choice == "Movement + Raid Watch":
-                    if ("pos=" in low or any(k in low for k in raid_keys)) and "built" not in low:
-                        final_output.append(line)
-                elif sub_choice == "Session Tracking" and any(k in low for k in session_keywords):
-                    final_output.append(line)
-
-    elif main_choice == "All Death Locations":
-        final_output = [l for l in all_lines if any(x in l.lower() for x in ["killed", "died", "suicide", "bled out"])]
-    elif main_choice == "All Placements":
-        final_output = [l for l in all_lines if any(x in l.lower() for x in placement_keys)]
-    elif main_choice == "Session Tracking (Global)":
-        final_output = [l for l in all_lines if any(x in l.lower() for x in session_keys)]
-    elif main_choice == "RAID WATCH (Global)":
-        final_output = [l for l in all_lines if any(x in l.lower() for x in raid_keys) and "built" not in l.lower()]
-
-    final_output.sort()
-    return header + "".join(final_output)
-
-# --- WEB UI ---
-st.title("🛡️ CyberDayZ Log Scanner")
-st.markdown("Upload your **.ADM** or **.RPT** files to generate iZurvive-ready filters.")
-
-uploaded_files = st.file_with_container = st.file_uploader("Choose Admin Logs", type=['adm', 'rpt'], accept_multiple_files=True)
-
-if uploaded_files:
-    st.sidebar.header("Filter Settings")
-    mode = st.sidebar.selectbox("Main Menu", [
-        "Activity per Specific Player", 
-        "All Death Locations", 
-        "All Placements", 
-        "Session Tracking (Global)", 
-        "RAID WATCH (Global)"
-    ])
-
-    target_player = None
-    sub_choice = None
-
-    if mode == "Activity per Specific Player":
-        # Extract players for the dropdown
-        temp_all = []
-        for f in uploaded_files:
-            temp_all.extend(f.getvalue().decode("utf-8", errors="ignore").splitlines())
+    for line in all_lines:
+        if "|" not in line: continue
         
-        player_list = sorted(list(set(line.split('"')[1] for line in temp_all if 'Player "' in line)))
-        target_player = st.sidebar.selectbox("Select Player", player_list)
-        sub_choice = st.sidebar.radio("Detail Level", [
-            "Full History", "Movement Only", "Movement + Building", "Movement + Raid Watch", "Session Tracking"
-        ])
+        name, coords = extract_player_and_coords(line)
+        if name != "System/Server" and coords:
+            player_positions[name] = coords
 
-    if st.button("Process Logs"):
-        result = filter_logs(uploaded_files, mode, target_player, sub_choice)
+        low = line.lower()
+        should_process = False
+
+        # --- EXISTING MODES ---
+        if mode == "Activity per Specific Player" and target_player == name:
+            if sub_choice == "Full History": should_process = True
+            elif sub_choice == "Movement Only" and "pos=" in low: should_process = True
+            elif sub_choice == "Movement + Building":
+                if ("pos=" in low or any(k in low for k in placement_keys)) and "hit" not in low: should_process = True
+            elif sub_choice == "Movement + Raid Watch":
+                if ("pos=" in low or any(k in low for k in raid_keys)) and "built" not in low: should_process = True
         
-        st.text_area("Preview (First 500 chars)", result[:500], height=200)
-        
-        st.download_button(
-            label="💾 Download Filtered File",
-            data=result,
-            file_name="FILTERED_LOG.adm",
-            mime="text/plain"
-        )
+        elif mode == "Session Tracking (Global)":
+            if any(k in low for k in session_keys): should_process = True
+
+        # --- UPDATED MODE: SUSPICIOUS BOOSTING (STacking Detector) ---
+        elif mode == "Suspicious Boosting Activity":
+            time_str = line.split(" | ")[0]
+            try:
+                current_time = datetime.strptime(time_str, "%H:%M:%S")
+            except:
+                continue
+
+            # Detect rapid placement of Fence Kits, Garden Plots, or Fireplaces
+            if any(obj in low for obj in stacking_objects):
+                if name not in boosting_tracker: 
+                    boosting_tracker[name] = []
+                boosting_tracker[name].append(current_time)
+                
+                # Check if 3+ stacking objects were placed within 60 seconds
+                if len(boosting_tracker[name]) >= 3:
+                    time_diff = (boosting_tracker[name][-1] - boosting_tracker[name][-3]).total_seconds()
+                    if time_diff <= 60:
+                        should_process = True
+            
+            # Reset tracker if they fold a fence or dismantle/pack an object (cleaning up/not stacking)
+            elif any(reset in low for reset in ["folded fence", "dismantled", "packed"]):
+                boosting_tracker[name] = []
+
+        if should_process:
+            last_pos = player_positions.get(name)
+            link = make_izurvive_link(last_pos)
+            raw_filtered_lines.append(line)
+
+            if link.startswith("http"):
+                status = "normal"
+                # Mark boosting as "death" status to reuse your red CSS color
+                if mode == "Suspicious Boosting Activity": status = "death" 
+                elif any(d in low for d in ["died", "killed", "suicide", "bled out"]): status = "death"
+                elif "connect" in low: status = "connect"
+                elif "disconnect" in low: status = "disconnect"
+
+                event_entry = {
+                    "time": str(line.split(" | ")[0]),
+                    "text": str(line.strip()),
+                    "link": link,
+                    "status": status
+                }
+
+                if name not in grouped_report: 
+                    grouped_report[name] = []
+                grouped_report[name].append(event_entry)
+    
+    return grouped_report, header + "\n".join(raw_filtered_lines)
