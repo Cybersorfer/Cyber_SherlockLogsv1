@@ -143,4 +143,39 @@ st.markdown("#### 🛡️ CyberDayZ Scanner v23")
 col1, col2 = st.columns([1, 2.3])
 
 with col1:
-    uploaded_files = st.file_uploader("
+    uploaded_files = st.file_uploader("Upload Admin Logs", type=['adm', 'rpt'], accept_multiple_files=True)
+    if uploaded_files:
+        mode = st.selectbox("Select Analysis Type", [
+            "Full Activity per Player", 
+            "Session Tracking (Global)", 
+            "Building Only (Global)", 
+            "Raid Watch (Global)", 
+            "Suspicious Boosting Activity"
+        ])
+        
+        target_player = None
+        if mode == "Full Activity per Player":
+            all_content = [f.getvalue().decode("utf-8", errors="ignore") for f in uploaded_files]
+            player_list = sorted(list(set(line.split('"')[1] for c in all_content for line in c.splitlines() if 'Player "' in line)))
+            target_player = st.selectbox("Select Player", player_list)
+
+        if st.button("🚀 Execute Analysis"):
+            report, raw_file, debug_file = filter_logs(uploaded_files, mode, target_player)
+            st.session_state.track_data, st.session_state.raw_download, st.session_state.debug_download = report, raw_file, debug_file
+
+    if "track_data" in st.session_state:
+        st.download_button("💾 Export iZurvive ADM", data=st.session_state.raw_download, file_name="CYBER_IZURVIVE.adm")
+        st.download_button("📂 Download Debug Report", data=st.session_state.debug_download, file_name="SCAN_DEBUG.txt")
+        
+        for p in sorted(st.session_state.track_data.keys()):
+            with st.expander(f"👤 {p} ({len(st.session_state.track_data[p])} events)"):
+                for ev in st.session_state.track_data[p]:
+                    st.caption(f"🕒 {ev['time']}")
+                    st.markdown(f"<div class='{ev['status']}-log'>{ev['text']}</div>", unsafe_allow_html=True)
+                    st.link_button("📍 Show on Map", ev['link'])
+                    st.divider()
+
+with col2:
+    if st.button("🔄 Reload Map"): st.session_state.mv = st.session_state.get('mv', 0) + 1
+    m_url = f"https://www.izurvive.com/serverlogs/?v={st.session_state.get('mv', 0)}"
+    components.iframe(m_url, height=1000, scrolling=True)
