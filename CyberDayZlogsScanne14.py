@@ -7,7 +7,7 @@ import streamlit.components.v1 as components
 # 1. Setup Page Config
 st.set_page_config(page_title="CyberDayZ Log Scanner", layout="wide")
 
-# 2. CSS: Professional Dark Mode & Responsive Layout
+# 2. CSS: Professional UI
 st.markdown(
     """
     <style>
@@ -62,17 +62,17 @@ def extract_player_and_coords(line):
 # 4. Filter Logic Implementation
 def filter_logs(files, mode, target_player=None):
     grouped_report, player_positions, boosting_tracker = {}, {}, {}
-    raw_filtered_lines, audit_log_entries = [], []
+    raw_filtered_lines, debug_log_entries = [], []
     
     header = "AdminLog started on 00:00:00\n******************************************************************************\n"
-    audit_header = f"--- CYBERDAYZ SUSPICIOUS ACTIVITY AUDIT ---\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+    debug_header = f"--- DEBUG REPORT: {mode} ---\nGenerated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
 
     all_lines = []
     for uploaded_file in files:
         content = uploaded_file.getvalue().decode("utf-8", errors="ignore")
         all_lines.extend(content.splitlines())
 
-    # Strictly defined keyword lists per server admin standards
+    # Keywords [cite: 7, 9]
     building_keys = ["placed", "built", "mounted"]
     raid_keys = ["packed", "dismantled", "folded", "unmounted", "unmount"]
     session_keys = ["connected", "disconnected", "died", "killed", "suicide", "bled out"]
@@ -86,46 +86,39 @@ def filter_logs(files, mode, target_player=None):
         low = line.lower()
         should_process = False
 
-        # --- MODE 1: FULL ACTIVITY (Movement + Actions) ---
         if mode == "Full Activity per Player":
             if target_player == name: should_process = True
 
-        # --- MODE 2: GLOBAL BUILDING ---
         elif mode == "Building Only (Global)":
             if any(k in low for k in building_keys) and "pos=" not in low: should_process = True
         
-        # --- MODE 3: GLOBAL RAID WATCH ---
         elif mode == "Raid Watch (Global)":
             if any(k in low for k in raid_keys) and "pos=" not in low: should_process = True
             
-        # --- MODE 4: SESSION TRACKING ---
         elif mode == "Session Tracking (Global)":
             if any(k in low for k in session_keys): should_process = True
 
-        # --- MODE 5: SUSPICIOUS BOOSTING ---
         elif mode == "Suspicious Boosting Activity":
             time_str = line.split(" | ")[0]
             try: current_time = datetime.strptime(time_str, "%H:%M:%S")
             except: continue
 
-            # Track rapid placement without folds
             if ("place" in low or "placed" in low) and any(obj in low for obj in boosting_objects):
                 if name not in boosting_tracker: boosting_tracker[name] = []
                 boosting_tracker[name].append(current_time)
-                
                 if len(boosting_tracker[name]) >= 3:
                     time_diff = (boosting_tracker[name][-1] - boosting_tracker[name][-3]).total_seconds()
                     if time_diff <= 60:
                         should_process = True
-                        audit_log_entries.append(f"[{time_str}] ALERT: {name} placed multiple items in {time_diff}s near {coords}")
             elif "fold" in low or "folded" in low:
                 boosting_tracker[name] = []
 
         if should_process:
             last_pos = player_positions.get(name)
             link = make_izurvive_link(last_pos)
+            debug_log_entries.append(f"MATCH FOUND: {line.strip()}")
             
-            # iZurvive Metadata Wrapping (Crucial for Map Display)
+            # iZurvive Metadata Wrapping 
             if "pos=<" in line:
                 raw_filtered_lines.append("##### PlayerList log: 1 players")
                 raw_filtered_lines.append(line)
@@ -143,10 +136,10 @@ def filter_logs(files, mode, target_player=None):
                 if name not in grouped_report: grouped_report[name] = []
                 grouped_report[name].append(event_entry)
     
-    return grouped_report, header + "\n".join(raw_filtered_lines), audit_header + "\n".join(audit_log_entries)
+    return grouped_report, header + "\n".join(raw_filtered_lines), debug_header + "\n".join(debug_log_entries)
 
 # --- USER INTERFACE ---
-st.markdown("#### 🛡️ CyberDayZ Scanner v18")
+st.markdown("#### 🛡️ CyberDayZ Scanner v19")
 col1, col2 = st.columns([1, 2.3])
 
 with col1:
@@ -167,13 +160,12 @@ with col1:
             target_player = st.selectbox("Select Player", player_list)
 
         if st.button("🚀 Execute Analysis"):
-            report, raw_file, audit_file = filter_logs(uploaded_files, mode, target_player)
-            st.session_state.track_data, st.session_state.raw_download, st.session_state.audit_download = report, raw_file, audit_file
+            report, raw_file, debug_file = filter_logs(uploaded_files, mode, target_player)
+            st.session_state.track_data, st.session_state.raw_download, st.session_state.debug_download = report, raw_file, debug_file
 
     if "track_data" in st.session_state:
-        st.download_button("💾 Export iZurvive Compatible ADM", data=st.session_state.raw_download, file_name="CYBER_IZURVIVE.adm")
-        if st.session_state.audit_download and len(st.session_state.audit_download.splitlines()) > 3:
-            st.download_button("🚨 Download Audit Report", data=st.session_state.audit_download, file_name="BOOSTING_REPORT.txt")
+        st.download_button("💾 Export iZurvive ADM", data=st.session_state.raw_download, file_name="CYBER_LOGS.adm")
+        st.download_button("📂 Download Debug Report", data=st.session_state.debug_download, file_name="SCAN_DEBUG_REPORT.txt")
         
         for p in sorted(st.session_state.track_data.keys()):
             with st.expander(f"👤 {p} ({len(st.session_state.track_data[p])} events)"):
